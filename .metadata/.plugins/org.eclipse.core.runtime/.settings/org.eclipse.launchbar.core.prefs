@@ -1,0 +1,11 @@
+LaunchTargetManager/org.eclipse.launchbar.core.launchTargetType.local,Local/arch=x86_64
+LaunchTargetManager/org.eclipse.launchbar.core.launchTargetType.local,Local/name=Local
+LaunchTargetManager/org.eclipse.launchbar.core.launchTargetType.local,Local/os=win32
+configDescList=org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:sensorthigh,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:MOTORV2 Debug,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:Orthosynx,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:bno055,org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:Final_Orthosynx
+eclipse.preferences.version=1
+org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:MOTORV2\ Debug/activeLaunchMode=debug
+org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:MOTORV2\ Debug/activeLaunchTarget=null\:---
+org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:Orthosynx/activeLaunchMode=debug
+org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:Orthosynx/activeLaunchTarget=null\:---
+org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:bno055/activeLaunchMode=debug
+org.eclipse.cdt.dsf.gdb.gdbRemotedescriptorType\:sensorthigh/activeLaunchMode=debug

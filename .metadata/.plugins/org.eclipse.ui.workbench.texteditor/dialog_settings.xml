@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<item key="hasShownOverlayPopupBefore" value="true"/>
+	<item key="replaceBarOpen" value="false"/>
+	<list key="searchhistory">
+		<item value="_write"/>
+		<item value="usart"/>
+		<item value="hal_uart"/>
+		<item value="rcc "/>
+		<item value="hal_init"/>
+		<item value="usart2_uart_init"/>
+		<item value="usart2_uart"/>
+		<item value="uart2"/>
+		<item value="UART_HandleTypeDef huart2;"/>
+		<item value="hal_uart_transmit"/>
+		<item value="dma_init"/>
+		<item value="printf"/>
+		<item value="huart2.instance"/>
+		<item value="ld2"/>
+		<item value="user code begin 4"/>
+	</list>
+</section>

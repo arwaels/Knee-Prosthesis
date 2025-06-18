@@ -1,0 +1,10 @@
+22:03:29 **** Incremental Build of configuration Debug for project bno055 ****
+make -j16 all 
+arm-none-eabi-size  bno055.elf 
+   text	   data	    bss	    dec	    hex	filename
+  43364	    468	   2524	  46356	   b514	bno055.elf
+Finished building: default.size.stdout
+ 
+
+22:03:29 Build Finished. 0 errors, 0 warnings. (took 366ms)
+

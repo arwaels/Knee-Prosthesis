@@ -1,0 +1,10 @@
+17:02:38 **** Incremental Build of configuration Debug for project Final_Orthosynx ****
+make -j16 all 
+arm-none-eabi-size  Final_Orthosynx.elf 
+   text	   data	    bss	    dec	    hex	filename
+  56068	    556	   2548	  59172	   e724	Final_Orthosynx.elf
+Finished building: default.size.stdout
+ 
+
+17:02:39 Build Finished. 0 errors, 0 warnings. (took 373ms)
+
