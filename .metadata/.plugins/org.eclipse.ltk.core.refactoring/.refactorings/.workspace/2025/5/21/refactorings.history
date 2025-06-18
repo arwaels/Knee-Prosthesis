@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">&#x0A;<refactoring comment="Delete resource &apos;sensorthigh&apos;" deleteContents="true" description="Delete resource &apos;sensorthigh&apos;" element1="/sensorthigh" flags="7" id="org.eclipse.ltk.core.refactoring.delete.resources" resources="1" stamp="1747671958826"/>&#x0A;<refactoring comment="Delete resource &apos;sensorthigh/Core/Inc/bno055_stm32.h&apos;" deleteContents="false" description="Delete resource &apos;sensorthigh/Core/Inc/bno055_stm32.h&apos;" element1="/sensorthigh/Core/Inc/bno055_stm32.h" flags="7" id="org.eclipse.ltk.core.refactoring.delete.resources" resources="1" stamp="1747673041538"/>
+</session>

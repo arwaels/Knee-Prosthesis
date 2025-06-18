@@ -1,0 +1,10 @@
+13:45:58 **** Incremental Build of configuration Debug for project Orthosynx ****
+make all 
+arm-none-eabi-size  Orthosynx.elf 
+   text	   data	    bss	    dec	    hex	filename
+  48164	    468	   2132	  50764	   c64c	Orthosynx.elf
+Finished building: default.size.stdout
+ 
+
+13:45:59 Build Finished. 0 errors, 0 warnings. (took 700ms)
+

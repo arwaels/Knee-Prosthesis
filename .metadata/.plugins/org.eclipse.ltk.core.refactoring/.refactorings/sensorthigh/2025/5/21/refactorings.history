@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">&#x0A;<refactoring comment="Rename resource &apos;sensorthigh/Core/Inc/BNO055&apos; to &apos;BNO055.h&apos;" description="Rename resource &apos;BNO055&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Inc/BNO055" name="BNO055.h" stamp="1747672948234" updateReferences="true"/>&#x0A;<refactoring comment="Rename resource &apos;sensorthigh/Core/Inc/BNO055.h&apos; to &apos;bno055.h&apos;" description="Rename resource &apos;BNO055.h&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Inc/BNO055.h" name="bno055.h" stamp="1747673054163" updateReferences="true"/>
+</session>
