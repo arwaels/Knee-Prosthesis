@@ -1,4 +1,4 @@
-Core/Src/bno055_final.o: ../Core/Src/bno055_final.c ../Core/Inc/main.h \
+Core/Src/bno055_test.o: ../Core/Src/bno055_test.c ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h \
  ../Core/Inc/stm32f4xx_hal_conf.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc.h \

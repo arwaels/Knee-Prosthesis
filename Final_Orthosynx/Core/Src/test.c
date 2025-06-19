@@ -23,6 +23,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include "bno055.h"
+#include "stm32f4xx_hal.h"
 /* Private includes ----------------------------------------------------------*/
 
 /* USER CODE BEGIN Includes */
@@ -141,7 +142,6 @@ s8 read_calibration_status(u8 dev_addr, u8 *calib_data);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
 /* Redirect printf to UART */
 #ifdef __GNUC__
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
@@ -163,129 +163,32 @@ void BNO055_Delay(u32 period) {
   * @brief  The application entry point.
   * @retval int
   */
+#include "stm32f4xx_hal.h"
+
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+
 int main(void)
 {
+	HAL_Init();
+	  SystemClock_Config();      // ← make sure your clocks are set up
+	  MX_GPIO_Init();            // ← this will configure PA2/PA3 for USART2 TX/RX
+	  MX_USART2_UART_Init();
 
-
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_USART2_UART_Init();
-  MX_DMA_Init();
-  MX_I2C1_Init();
-  MX_I2C2_Init();
-  MX_TIM3_Init();
-  MX_WWDG_Init();
-  /* USER CODE BEGIN 2 */
-  // Configure interrupt priorities
-  HAL_NVIC_SetPriority(I2C1_EV_IRQn, 1, 0); // I2C1 Event
-  HAL_NVIC_SetPriority(I2C1_ER_IRQn, 0, 0); // I2C1 Error (highest priority)
-  HAL_NVIC_SetPriority(I2C2_EV_IRQn, 1, 0); // I2C2 Event
-  HAL_NVIC_SetPriority(I2C2_ER_IRQn, 0, 0); // I2C2 Error (highest priority)
-  HAL_NVIC_SetPriority(USART2_IRQn, 1, 0); // USART2 global interrupt
-  HAL_NVIC_SetPriority(TIM3_IRQn, 2, 0); // Timer3 (lower priority)
-  HAL_NVIC_SetPriority(WWDG_IRQn, 0, 0); // Watchdog (highest priority)
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 2, 0); // User Button
-  // Configure DMA interrupt priorities
-  HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 0, 0); // I2C2_RX
-  HAL_NVIC_SetPriority(DMA1_Stream7_IRQn, 0, 0); // I2C2_TX
-  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0); // USART2_TX
-  // Configure I2C noise filtering
-  HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE);
-  HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 3);
-  HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE);
-  HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 3);
-  // Configure printf buffering
-  setbuf(stdout, NULL); // Disable buffering for immediate output
-  // Initialize Debug LED to OFF
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-  // Print startup message
-  printf("Prosthetic Knee Controller Starting...\r\n");
-  printf("Clock: %lu MHz\r\n", HAL_RCC_GetSysClockFreq()/1000000);
-
-  /////////start bno055 code ///
-  printf("\r\n=== Prosthetic Knee Controller (IMUPLUS Mode) ===\r\n");
-  // Flash LED to indicate startup
-  for(int i = 0; i < 5; i++) {
-      HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-      HAL_Delay(200);
+	  printf("\r\n=== STARTUP TEST ===\r\n");  // SIMPLE TEST MESSAGE
+	  HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);  // Verify code execution
+	  while(1);  // Halt here to test if message appears
+  while (1)
+  {
+	  printf("Hello from STM32 yay!\r\n");
+	  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);  // Blink LD2 if setup
+	  HAL_Delay(500);
   }
-  printf("System Clock: %lu Hz\r\n", HAL_RCC_GetSysClockFreq());
-  Debug_I2C_Status();
-  // Wait for sensors to power up
-  printf("Waiting for sensors to boot...\r\n");
-  BNO055_Delay(BNO055_BOOT_DELAY_MS);  // Minimum 650ms per datasheet
-  // Scan I2C bus
-  I2C_Scan_And_Assign();
-  // Initialize sensors
-  printf("Initializing sensors...\r\n");
-  BNO055_Init_Dual();
-  // Calibration phase
-  printf("Calibrating sensors - keep stationary!\r\n");
-  u32 calib_start = HAL_GetTick();
-  u8 calib_printed = 0;
-  while(1) {
-      Read_Dual_Calibration();
-      // Print calibration status every second
-      if(HAL_GetTick() - calib_start > calib_printed * 1000) {
-          printf("Calib: Thigh(G:%d A:%d) Shank(G:%d A:%d)\r\n",
-                 thigh.calib[1], thigh.calib[2],
-                 shank.calib[1], shank.calib[2]);
-          calib_printed++;
-      }
-      // Exit when gyros are calibrated
-      if(thigh.calib[1] >= 2 && shank.calib[1] >= 2) {
-          printf("Calibration complete!\r\n");
-          break;
-      }
-      if(HAL_GetTick() - calib_start > CALIBRATION_TIMEOUT_MS) {
-          printf("Calibration timeout! Continuing...\r\n");
-          break;
-      }
-// or change to  Delay input = BNO055_BOOT_DELAY_MS
-      BNO055_Delay(100);
-  }
-  last_update = HAL_GetTick();
+}
 
 
-  /* USER CODE END 2 */
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  while (1) {
-      // 100Hz update rate (10ms interval)
-      if(HAL_GetTick() - last_update >= BNO055_UPDATE_INTERVAL_MS) {
-      	Read_Dual_Orientation();
-          last_update = HAL_GetTick();
-      }
-      BNO055_Delay(1); // Prevent watchdog issues
-  }
-
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-
-
-  }
 
 
   /* USER CODE END 3 */
@@ -581,7 +484,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
