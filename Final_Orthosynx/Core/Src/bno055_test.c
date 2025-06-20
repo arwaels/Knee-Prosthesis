@@ -1,17 +1,3 @@
-	/* USER CODE BEGIN Header */
-	/**
-	  ******************************************************************************
-	  * @file           : main.c
-	  * @brief          : Main program body - Prosthetic Knee Controller (IMUPLUS Mode)
-	  ******************************************************************************
-	  * @attention
-	  *
-	  * Copyright (c) 2025 STMicroelectronics.
-	  * All rights reserved.
-	  *
-	  * Licensed under terms in LICENSE; if none, provided AS-IS.
-	  ******************************************************************************
-	  */
 	/* USER CODE END Header */
 
 	/* Includes ------------------------------------------------------------------*/
@@ -19,21 +5,25 @@
 
 	/* Private includes ----------------------------------------------------------*/
 	/* USER CODE BEGIN Includes */
+
 	#include <stdio.h>
 	#include <math.h>
 	#include <stdbool.h>
     #include <string.h>
 	#include "bno055.h"
+
 	/* USER CODE END Includes */
 
 	/* Private typedef -----------------------------------------------------------*/
 	/* USER CODE BEGIN PTD */
+
 	typedef enum {
 		SENSOR_OK = 0,
 		SENSOR_COMM_ERROR,
 		SENSOR_NOT_CALIBRATED,
 		SENSOR_INIT_ERROR
 	} SensorStatus;
+
 	typedef enum {
 	    GAIT_PHASE_UNKNOWN = 0,
 	    GAIT_PHASE_HEEL_STRIKE,
@@ -44,6 +34,7 @@
 	    GAIT_PHASE_STALE_DATA,
 	    GAIT_PHASE_STABLE_RECAL
 	} GaitPhase;
+
 	typedef struct {
 	    GaitPhase current_phase;
 	    GaitPhase previous_phase;
@@ -65,10 +56,15 @@
 	#define CALIBRATION_TIMEOUT_MS 30000
 	#define IMUPLUS_MODE            BNO055_OPERATION_MODE_IMUPLUS
 	#define IMU_READ_INTERVAL_MS    10
-	#define MAX_I2C_RETRIES         3
+	#define MAX_I2C_RETRIES         5
 	#define I2C_TIMEOUT_MS          500
 	#define GYRO_CALIB_THRESHOLD    2
 	#define ACCEL_CALIB_THRESHOLD   2
+#define KNEE_PRINT_INTERVAL 500
+#define MAX_ERROR_COUNT       20
+#define HEALTH_CHECK_MS     5000
+#define CALIB_PRINT_MS      1000
+#define SENSOR_TIMEOUT_MS    100
 
 	// Gait phase detection thresholds
 	#define HS_ENTER_ANGLE_MAX   5.0f
@@ -216,10 +212,7 @@
 			  HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE);
 			  HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 3);
 		  MX_TIM3_Init();
-		  // Override TIM3 prescaler for 100Hz operation (84MHz clock)
-		  // Configure TIM3 for 100Hz operation (84MHz clock)
-		  __HAL_TIM_SET_PRESCALER(&htim3, 8399);  // 84MHz/8400 = 10kHz
-		  __HAL_TIM_SET_AUTORELOAD(&htim3, 99);   // 100Hz (10kHz/100)
+
 
 		 // MX_WWDG_Init();
 
@@ -289,10 +282,14 @@
 		printf("Raw Calib Regs: Thigh=0x%02X, Shank=0x%02X\r\n", thigh_raw, shank_raw);
 
 		// Print status every second
-		if (HAL_GetTick() - last_status_print >= 1000)
+		if (HAL_GetTick() - last_status_print >= CALIB_PRINT_MS)
 		{
 		  print_calibration_status();
 		  last_status_print = HAL_GetTick();
+		}
+
+		if (!calibration_complete) {
+		    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);  // Amber LED blink
 		}
 
 		// Check if both sensors are calibrated
@@ -324,8 +321,18 @@
 
 	  if (!calibration_complete)
 	  {
-		printf("\r\nWARNING: Calibration timeout! Proceeding with partial calibration.\r\n");
-		system_status = SENSOR_NOT_CALIBRATED;
+	      printf("\r\nWARNING: Calibration timeout! Proceeding with partial calibration.\r\n");
+	      system_status = SENSOR_NOT_CALIBRATED;
+
+	      // SAFETY: Only lock if calibration failed
+	      gait_state.is_locked = true;
+	      HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET); // Red LED
+	      printf("SAFETY LOCK: Calibration timeout!\r\n");
+	  }
+	  else
+	  {
+	      // Only reach here if calibration succeeded
+	      gait_state.is_locked = false; // Ensure unlocked on success
 	  }
 
 	  // Start timer for 100Hz updates
@@ -369,7 +376,7 @@
 
 		      // System health monitoring (every 5s)
 		      static uint32_t last_health_check = 0;
-		      if (HAL_GetTick() - last_health_check >= 5000) {
+		      if (HAL_GetTick() - last_health_check >= HEALTH_CHECK_MS) {
 		          system_health_check();
 		          last_health_check = HAL_GetTick();
 
@@ -688,8 +695,6 @@
 
 	  /* USER CODE END MX_GPIO_Init_2 */
 	}
-
-
 	/* USER CODE BEGIN 4 */
 	// ==== BNO055 I2C INTERFACE FUNCTIONS ====
 	s8 bno055_read_reg(u8 dev, u8 reg, u8 *data) {
@@ -749,7 +754,7 @@
 	  shank_sensor.dev_addr = SHANK_SENSOR_ADDR; // 0x29
 
 	  // Verify devices are present
-	  if (HAL_I2C_IsDeviceReady(&hi2c2, thigh_sensor.dev_addr << 1, 3, 100) == HAL_OK)
+	  if (HAL_I2C_IsDeviceReady(&hi2c2, thigh_sensor.dev_addr << 1, 3, SENSOR_TIMEOUT_MS ) == HAL_OK)
 	  {
 	    printf("✓ Thigh sensor found at 0x%02X\r\n", thigh_sensor.dev_addr);
 	    sensors_found++;
@@ -759,7 +764,7 @@
 	    printf("✗ Thigh sensor not responding at 0x%02X\r\n", thigh_sensor.dev_addr);
 	  }
 
-	  if (HAL_I2C_IsDeviceReady(&hi2c2, shank_sensor.dev_addr << 1, 3, 100) == HAL_OK)
+	  if (HAL_I2C_IsDeviceReady(&hi2c2, shank_sensor.dev_addr << 1, 3, SENSOR_TIMEOUT_MS ) == HAL_OK)
 	  {
 	    printf("✓ Shank sensor found at 0x%02X\r\n", shank_sensor.dev_addr);
 	    sensors_found++;
@@ -773,19 +778,30 @@
 	}
 
 	GaitPhase detect_gait_phase(float angle, float velocity, uint32_t current_time) {
-	    // Check for stale data (100ms timeout)
-	    if (current_time - last_orientation_update > 100) {
-	        gait_state.current_phase = GAIT_PHASE_STALE_DATA;
-	        return gait_state.current_phase;
-	    }
 
-	    // Check if we should remain in current phase (hysteresis and min duration)
+		if (gait_state.needs_recalibration &&
+		    gait_state.current_phase != GAIT_PHASE_STABLE_RECAL)
+		{
+		    gait_state.needs_recalibration = false;
+		}
+
+		// Check if we should remain in current phase (hysteresis and min duration)
 	    if ((current_time - gait_state.phase_entry_time) < PHASE_MIN_DURATION_MS) {
 	        return gait_state.current_phase;
 	    }
 
+		// Check for stale data (100ms timeout)
+
+	    if (current_time - last_orientation_update > SENSOR_TIMEOUT_MS) {
+	        gait_state.current_phase = GAIT_PHASE_STALE_DATA;
+	        return gait_state.current_phase;
+	    }
+
+
 	    // Heel Strike Detection
-	    if (angle >= 0 && angle <= 5 && fabsf(velocity) <= 100) {
+	    if (angle >= 0 && angle <= HS_ENTER_ANGLE_MAX &&
+	        fabsf(velocity) <= HS_ENTER_VEL_MAX)
+	    {
 	        if (gait_state.current_phase != GAIT_PHASE_HEEL_STRIKE) {
 	            gait_state.previous_phase = gait_state.current_phase;
 	            gait_state.current_phase = GAIT_PHASE_HEEL_STRIKE;
@@ -854,16 +870,20 @@
 	        return gait_state.current_phase;
 	    }
 
-	    // Terminal Swing Exit Hysteresis
+	    // Terminal swing exit condition:
 	    if (gait_state.current_phase == GAIT_PHASE_TERMINAL_SWING &&
-	        (angle > 13 || velocity > -15)) {
-	        gait_state.previous_phase = gait_state.current_phase;
+	        (angle > TS_EXIT_ANGLE_MIN || velocity > TS_EXIT_VEL_MIN))
+	    {
 	        gait_state.current_phase = GAIT_PHASE_SWING;
 	        gait_state.phase_entry_time = current_time;
 	    }
 
+
 	    // Stable Recalibration Check
-	    if (fabsf(velocity) <= 20 && angle <= 5) {
+	    if (fabsf(velocity) <= RECAL_VEL_MAX &&
+	        angle <= RECAL_ANGLE_MAX &&
+	        current_time - last_orientation_update < SENSOR_TIMEOUT_MS)  // Data fresh
+	    {
 	        if (gait_state.current_phase != GAIT_PHASE_STABLE_RECAL) {
 	            gait_state.previous_phase = gait_state.current_phase;
 	            gait_state.current_phase = GAIT_PHASE_STABLE_RECAL;
@@ -896,8 +916,20 @@
 	        return SENSOR_INIT_ERROR;
 	    }
 
-	    // Set to IMUPLUS mode (IMU + Magnetometer)
-	    if (bno055_set_operation_mode(IMUPLUS_MODE) != BNO055_SUCCESS) {
+	    // Perform self-test
+	 	    u8 selftest_result;
+	 	    if (BNO055_I2C_bus_read(sensor->dev_addr,
+	 	                            BNO055_SELFTEST_RESULT_ADDR,
+	 	                            &selftest_result, 1) != BNO055_SUCCESS) {
+	 	        printf("ERROR: %s self-test read failed!\r\n", name);
+	 	        return SENSOR_INIT_ERROR;
+	 	    }
+
+	    // Set to IMUPLUS mode (IMU)
+	    uint8_t mode = IMUPLUS_MODE;
+	    if (BNO055_I2C_bus_write(sensor->dev_addr,
+	                             BNO055_OPR_MODE_ADDR,
+	                             &mode, 1) != BNO055_SUCCESS){
 	        printf("ERROR: %s failed to set IMUPLUS mode!\r\n", name);
 	        return SENSOR_INIT_ERROR;
 	    }
@@ -905,14 +937,28 @@
 	    // Wait for mode change
 	    BNO055_Delay(100);
 
-	    // Perform self-test
-	    u8 selftest_result;
-	    if (BNO055_I2C_bus_read(sensor->dev_addr,
-	                            BNO055_SELFTEST_RESULT_ADDR,
-	                            &selftest_result, 1) != BNO055_SUCCESS) {
-	        printf("ERROR: %s self-test read failed!\r\n", name);
+
+
+	    // Axis remapping configuration
+	    uint8_t remap_config = 0x21;  // Default P0 configuration
+	    uint8_t remap_sign = 0x00;    // All axes positive
+
+	    // Write configuration
+	    if (BNO055_I2C_bus_write(sensor->dev_addr,
+	                            BNO055_AXIS_MAP_CONFIG_ADDR,
+	                            &remap_config, 1) != BNO055_SUCCESS) {
+	        printf("ERROR: %s axis config failed!\r\n", name);
 	        return SENSOR_INIT_ERROR;
 	    }
+
+	    // Write sign configuration
+	    if (BNO055_I2C_bus_write(sensor->dev_addr,
+	                            BNO055_AXIS_MAP_SIGN_ADDR,
+	                            &remap_sign, 1) != BNO055_SUCCESS) {
+	        printf("ERROR: %s axis sign config failed!\r\n", name);
+	        return SENSOR_INIT_ERROR;
+	    }
+
 
 	    // Check self-test results (1 = passed, 0 = failed)
 	    u8 mcu_pass = (selftest_result >> 0) & 0x01;
@@ -1062,10 +1108,10 @@
 	}
 
 	float normalize_angle(float angle) {
-	    angle = fmodf(angle, 360.0f);
-	    if (angle > 180.0f) angle -= 360.0f;
-	    if (angle < -180.0f) angle += 360.0f;
-	    return angle;
+		angle = fmodf(angle, 360.0f);
+		if (angle < 0) angle += 360.0f;  // Convert to 0-360 range
+		if (angle > 180) angle -= 360.0f;  // Convert to -180 to 180
+		return angle;
 	}
 
 	void Read_Dual_Orientation(void)
@@ -1118,7 +1164,7 @@
 	        error_count++;  // Increment error counter on any failure
 
 	        // Emergency shutdown after 20 consecutive errors
-	        if (error_count > 20) {
+	        if (error_count > MAX_ERROR_COUNT) {
 	            printf("CRITICAL: Too many consecutive errors - LOCKING KNEE!\r\n");
 	            gait_state.is_locked = true;
 	            HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
@@ -1141,8 +1187,8 @@
 	    uint32_t current_time = HAL_GetTick();
 
 	    // Check for sensor timeouts
-	    if ((current_time - thigh_imu.last_read_time > 100) ||
-	        (current_time - shank_imu.last_read_time > 100))
+	    if ((current_time - thigh_imu.last_read_time > SENSOR_TIMEOUT_MS) ||
+	        (current_time - shank_imu.last_read_time > SENSOR_TIMEOUT_MS))
 	    {
 	        return; // Skip calculation if data is stale
 	    }
@@ -1154,7 +1200,7 @@
 	        first_sample = false;
 
 	        // Calculate initial raw angle
-	        float pitch_diff = shank_imu.euler.p - thigh_imu.euler.p;
+	        float pitch_diff = thigh_imu.euler.p - shank_imu.euler.p;
 	        prev_raw_knee_angle = normalize_angle(pitch_diff);
 
 	        return;
@@ -1162,6 +1208,7 @@
 
 	    // Calculate time delta in SECONDS
 	    float dt = (current_time - prev_update_time) / 1000.0f;
+	    if (dt > 0.1f) dt = 0.1f;
 	    prev_update_time = current_time;  // Update immediately after calculation
 
 	    // Prevent division by zero and handle very small time steps
@@ -1169,7 +1216,11 @@
 
 	    // Calculate RAW knee angle (signed)
 	    float pitch_diff = shank_imu.euler.p - thigh_imu.euler.p;
+
+
+
 	    float raw_knee_angle = normalize_angle(pitch_diff);
+
 
 	    // For display only - clamp to 0-160° (preserve raw for calculations)
 	    float display_angle = raw_knee_angle;
@@ -1191,7 +1242,7 @@
 	    knee_angle = raw_knee_angle;  // Store SIGNED angle for gait detection
 
 	    // Print results with clamped display angle
-	    if (current_time - last_print_time >= 100) {
+	    if (current_time - last_print_time >= KNEE_PRINT_INTERVAL) {
 	        printf("Knee: %6.1f° | Vel: %+7.1f°/s | T_p:%6.1f S_p:%6.1f\r\n",
 	               display_angle, filtered_velocity,
 	               thigh_imu.euler.p, shank_imu.euler.p);
@@ -1211,7 +1262,7 @@
 	        last_error_time = current_time;
 
 	        // Emergency shutdown after 20 consecutive errors
-	        if (error_count > 20) {
+	        if (error_count > MAX_ERROR_COUNT) {
 	            printf("CRITICAL: Too many errors - LOCKING KNEE!\r\n");
 	            gait_state.is_locked = true;
 	            HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
