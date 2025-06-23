@@ -90,6 +90,16 @@
 	#define THIGH_SENSOR_ADDR  BNO055_I2C_ADDR1
 	#define SHANK_SENSOR_ADDR  BNO055_I2C_ADDR2
 
+	//MOTOR DEFINES
+#define PUL_Port GPIOA
+#define PUL_Pin  GPIO_PIN_0
+
+#define DIR_Port GPIOA
+#define DIR_Pin  GPIO_PIN_1
+
+#define ENA_Port GPIOA
+#define ENA_Pin  GPIO_PIN_4
+
 	/* USER CODE END PD */
 
 	/* Private macro -------------------------------------------------------------*/
@@ -98,11 +108,15 @@
 	/* USER CODE END PM */
 
 	/* Private variables ---------------------------------------------------------*/
+	ADC_HandleTypeDef hadc1;
+
+
 	I2C_HandleTypeDef hi2c1;
 	I2C_HandleTypeDef hi2c2;
 	DMA_HandleTypeDef hdma_i2c2_rx;
 	DMA_HandleTypeDef hdma_i2c2_tx;
 
+	TIM_HandleTypeDef htim2;
 	TIM_HandleTypeDef htim3;
 
 	UART_HandleTypeDef huart2;
@@ -123,6 +137,21 @@
 	bool calibration_complete = false;
 	GaitState gait_state = {GAIT_PHASE_UNKNOWN, GAIT_PHASE_UNKNOWN, 0, false, false};
 	const uint32_t PHASE_MIN_DURATION_MS = 50; //minimum 50ms per phase
+
+	//MOTOR VARIABLES:
+	volatile uint8_t motor_direction = 0; // 0 = CW, 1 = CCW
+	uint32_t motor_delay = 10;
+	float motor_speed = 100;       // Initial delay in microseconds
+	float target_speed = 5;       // Final delay (faster)
+	float ds = 0.01;                 // Rate of change per loop iteration
+	volatile uint32_t step_count = 0;
+	volatile uint32_t steps_needed = 0;
+	volatile uint8_t motor_running = 0;
+	volatile uint8_t state = 0;  // Shared between step function and interrupt
+	uint32_t step_interval_us = 500; // default, can be set dynamically
+
+
+
 	/* USER CODE END PV */
 
 
@@ -135,6 +164,8 @@
 	static void MX_I2C2_Init(void);
 	static void MX_TIM3_Init(void);
 	static void MX_WWDG_Init(void);
+	static void MX_ADC1_Init(void);
+	static void MX_TIM2_Init(void);
 
 	/* USER CODE BEGIN PFP */
 	GaitPhase detect_gait_phase(float angle, float velocity, uint32_t current_time);
@@ -167,6 +198,25 @@
 	// Utility functions
 	void handle_sensor_error(const char* sensor_name, const char* error_msg);
 	void system_health_check(void);
+
+
+	//MOTOR FUNCTIONS
+	void Motor_OneStep(uint32_t step_speed_us);
+	void Motor_ContinousStep(uint32_t speed_us, uint32_t duration_ms, uint8_t direction); // 0 = CW, 1 = CCW
+	void Motor_Enable(void);
+	void Motor_Disable(void);
+	void Motor_Direction_CW(void);
+	void Motor_Direction_CCW(void);
+	void Motor_Direction_CWCCW(void);
+	void Motor_ContinousStepWDelay(uint32_t speed_us);
+	float clamp(float value, float min, float max);
+	void DWT_Init(void);
+	void delay_us(uint32_t us);
+	void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim);
+	uint16_t Read_ADC_CurrentRaw(void);
+	float Convert_ADC_To_Current(uint16_t adc_value);
+	void handle_motor_for_gait_phase(GaitPhase phase);  // Only if GaitPhase is already typedef'd
+
 	/* USER CODE END PFP */
 
 	/* Private user code ---------------------------------------------------------*/
@@ -212,6 +262,8 @@
 			  HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE);
 			  HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 3);
 		  MX_TIM3_Init();
+		  MX_ADC1_Init();
+		  //MX_TIM2_Init();
 
 
 		 // MX_WWDG_Init();
@@ -351,19 +403,33 @@
 	  /* USER CODE BEGIN WHILE */
 	  while (1)
 	  {
-	    // Process sensor data when timer flag is set (100Hz)
-		  if (timer_flag) {
-		      timer_flag = false;
-		      Read_Dual_Orientation();
-		      calculate_knee_kinematics();
+		  HAL_GPIO_WritePin(PUL_Port, PUL_Pin, GPIO_PIN_SET);
+		        delay_us(10);
+		        HAL_GPIO_WritePin(PUL_Port, PUL_Pin, GPIO_PIN_RESET);
+		        delay_us(10);
+		        uint16_t adc_val = Read_ADC_CurrentRaw();
+		  		  float motor_current = Convert_ADC_To_Current(adc_val);
+		  		  if (motor_current > 4.0f)  // overcurrent protection
+		  		  {
+		  		     // Motor_Disable();
+		  		  }
 
-		      // Gait phase detection
-		      gait_state.previous_phase = gait_state.current_phase;
-		      gait_state.current_phase = detect_gait_phase(
-		          knee_angle,
-		          filtered_velocity,
-		          HAL_GetTick()
-		      );
+		  	    // Process sensor data when timer flag is set (100Hz)
+		  		  if (timer_flag) {
+		  		      timer_flag = false;
+		  		      Read_Dual_Orientation();
+		  		      calculate_knee_kinematics();
+
+		  		      // Gait phase detection
+		  		      gait_state.previous_phase = gait_state.current_phase;
+		  		      gait_state.current_phase = detect_gait_phase(
+		  		          knee_angle,
+		  		          filtered_velocity,
+		  		          HAL_GetTick()
+		  		      );
+		  		      if (!gait_state.is_locked)
+		  		              handle_motor_for_gait_phase(gait_state.current_phase);
+
 
 		      // Handle recalibration request
 		      if (gait_state.needs_recalibration) {
@@ -449,6 +515,62 @@
 	  }
 	}
 
+
+	/**
+	  * @brief ADC1 Initialization Function
+	  * @param None
+	  * @retval None
+	  */
+	static void MX_ADC1_Init(void)
+	{
+
+	  /* USER CODE BEGIN ADC1_Init 0 */
+
+	  /* USER CODE END ADC1_Init 0 */
+
+	  ADC_ChannelConfTypeDef sConfig = {0};
+
+	  /* USER CODE BEGIN ADC1_Init 1 */
+
+	  /* USER CODE END ADC1_Init 1 */
+
+	  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+	  */
+	  hadc1.Instance = ADC1;
+	  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+	  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+	  hadc1.Init.ScanConvMode = DISABLE;
+	  hadc1.Init.ContinuousConvMode = DISABLE;
+	  hadc1.Init.DiscontinuousConvMode = DISABLE;
+	  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+	  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+	  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+	  hadc1.Init.NbrOfConversion = 1;
+	  hadc1.Init.DMAContinuousRequests = DISABLE;
+	  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+	  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
+
+	  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+	  */
+	  sConfig.Channel = ADC_CHANNEL_6;
+	  sConfig.Rank = 1;
+	  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+	  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
+	  /* USER CODE BEGIN ADC1_Init 2 */
+
+	  /* USER CODE END ADC1_Init 2 */
+
+	}
+
+
+
+
 	/**
 	  * @brief I2C1 Initialization Function
 	  * @param None
@@ -516,6 +638,54 @@
 	  /* USER CODE END I2C2_Init 2 */
 
 	}
+
+
+	/**
+	  * @brief TIM2 Initialization Function
+	  * @param None
+	  * @retval None
+	  */
+	/*
+	static void MX_TIM2_Init(void)
+	{
+
+	  /* USER CODE BEGIN TIM2_Init 0 */
+
+	  /* USER CODE END TIM2_Init 0 */
+
+	  /*TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+	  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+	  /* USER CODE BEGIN TIM2_Init 1 */
+
+	  /* USER CODE END TIM2_Init 1 */
+	  /*
+	  htim2.Instance = TIM2;
+	  htim2.Init.Prescaler = 0;
+	  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+	  htim2.Init.Period = 4294967295;
+	  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
+	  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+	  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
+	  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }*/
+	  /* USER CODE BEGIN TIM2_Init 2 */
+
+	  /* USER CODE END TIM2_Init 2 */
+
+	//}
 
 	/**
 	  * @brief TIM3 Initialization Function
@@ -666,7 +836,8 @@
 	  __HAL_RCC_GPIOB_CLK_ENABLE();
 
 	  /*Configure GPIO pin Output Level */
-	  HAL_GPIO_WritePin(GPIOA, LD2_Pin|MOTOR_STEP_Pin, GPIO_PIN_RESET);
+	    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_4|LD2_Pin
+	                            |MOTOR_STEP_Pin, GPIO_PIN_RESET);
 
 	  /*Configure GPIO pin Output Level */
 	  HAL_GPIO_WritePin(GPIOB, MOTOR_DIR_Pin|MOTOR_ENG_Pin|DEBUG_LED_Pin, GPIO_PIN_RESET);
@@ -677,12 +848,14 @@
 	  GPIO_InitStruct.Pull = GPIO_NOPULL;
 	  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-	  /*Configure GPIO pins : LD2_Pin MOTOR_STEP_Pin */
-	  GPIO_InitStruct.Pin = LD2_Pin|MOTOR_STEP_Pin;
-	  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-	  GPIO_InitStruct.Pull = GPIO_NOPULL;
-	  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-	  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+	  /*Configure GPIO pins : PA0 PA1 PA4 LD2_Pin
+	                             MOTOR_STEP_Pin */
+	    GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_4|LD2_Pin
+	                            |MOTOR_STEP_Pin;
+	    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	    GPIO_InitStruct.Pull = GPIO_NOPULL;
+	    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 	  /*Configure GPIO pins : MOTOR_DIR_Pin MOTOR_ENG_Pin DEBUG_LED_Pin */
 	  GPIO_InitStruct.Pin = MOTOR_DIR_Pin|MOTOR_ENG_Pin|DEBUG_LED_Pin;
@@ -696,6 +869,90 @@
 	  /* USER CODE END MX_GPIO_Init_2 */
 	}
 	/* USER CODE BEGIN 4 */
+
+	extern ADC_HandleTypeDef hadc1;
+
+	uint16_t Read_ADC_CurrentRaw(void)
+	{
+	    HAL_ADC_Start(&hadc1);
+	    HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	    uint16_t raw = HAL_ADC_GetValue(&hadc1);
+	    HAL_ADC_Stop(&hadc1);
+	    return raw;
+	}
+	float Convert_ADC_To_Current(uint16_t adc_value)
+	{
+	    float voltage = (adc_value / 4095.0f) * 3.3f;  // Convert to voltage
+	    float zero_current_voltage = 3.3f / 2.0f;      // 0A point is mid-voltage
+	    float sensitivity = 0.185f;                    // ACS712 5A version: 185mV/A
+
+	    float current = (voltage - zero_current_voltage) / sensitivity;
+
+	    return current;
+	}
+
+
+		void handle_motor_for_gait_phase(GaitPhase phase)
+		{
+		    static uint8_t last_phase = GAIT_PHASE_UNKNOWN;
+		    static uint8_t stale_data_lock_engaged = 0;
+		    static uint32_t last_recal_time = 0;
+
+		    if (phase == last_phase && motor_running)
+		        return;  // Don’t restart motor for same phase if already active
+
+		    switch (phase)
+		    {
+		        case GAIT_PHASE_UNKNOWN:
+		            // Do nothing
+		            break;
+
+		        case GAIT_PHASE_HEEL_STRIKE:
+		            Motor_Direction_CW();
+		            Motor_ContinousStep(500, 500, 0);  // 500us delay, 500ms ≈ 1 rev
+		            break;
+
+		        case GAIT_PHASE_TOE_OFF:
+		            Motor_Direction_CCW();
+		            Motor_ContinousStep(500, 500, 1);  // 500us delay, 500ms ≈ 1 rev
+		            break;
+
+		        case GAIT_PHASE_PEAK_SWING_FLEXION:
+		            // Hold position: do not send any step commands
+		            break;
+
+		        case GAIT_PHASE_TERMINAL_SWING:
+		            Motor_Direction_CW();
+		            Motor_ContinousStep(1500, 400, 0);  // slower CW tighten
+		            break;
+
+		        case GAIT_PHASE_STALE_DATA:
+		            if (!stale_data_lock_engaged)
+		            {
+		                Motor_Direction_CW();
+		                Motor_ContinousStep(500, 500, 0);  // immediate full lock
+		                stale_data_lock_engaged = 1;
+		            }
+		            break;
+
+		        case GAIT_PHASE_STABLE_RECAL:
+		            if (HAL_GetTick() - last_recal_time > 3000)  // only every 3s
+		            {
+		                Motor_Direction_CW();
+		                Motor_ContinousStep(2000, 3000, 0);  // gradual over 3 seconds
+		                last_recal_time = HAL_GetTick();
+		            }
+		            break;
+
+		        default:
+		            break;
+		    }
+
+		    if (phase != GAIT_PHASE_STALE_DATA)
+		        stale_data_lock_engaged = 0;  // Reset flag once we exit stale phase
+
+		    last_phase = phase;
+		}
 	// ==== BNO055 I2C INTERFACE FUNCTIONS ====
 	s8 bno055_read_reg(u8 dev, u8 reg, u8 *data) {
 	    return BNO055_I2C_bus_read(dev, reg, data, 1);
@@ -1333,18 +1590,156 @@
 	}
 
 	void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-	{
-	  if (htim->Instance == TIM3)
-	  {
-	    timer_flag = true;  // Trigger 100Hz processing
-	  }
-	}
+		{
+		    if (htim->Instance == TIM3)
+		    {
+		        timer_flag = true;  // Trigger 100Hz IMU loop
+		    }/*
+		    else if (htim->Instance == TIM2 && motor_running)
+		    {
+		        HAL_GPIO_WritePin(PUL_Port, PUL_Pin, state ? GPIO_PIN_RESET : GPIO_PIN_SET);
+		        state ^= 1;
+
+		        if (state) step_count++;
+
+		        if (step_count >= steps_needed)
+		        {
+		            HAL_TIM_Base_Stop_IT(&htim2);
+		            motor_running = 0;
+		        }
+		    }*/
+		}
 
 	void HAL_WWDG_EarlyWakeupCallback(WWDG_HandleTypeDef *hwwdg)
 	{
 	  // Watchdog early wakeup - refresh the watchdog
 	  HAL_WWDG_Refresh(hwwdg);
 	}
+
+	void Motor_Enable(void)
+		{
+		    HAL_GPIO_WritePin(ENA_Port, ENA_Pin, GPIO_PIN_RESET); // Enable driver
+
+		}
+		void Motor_Disable(void)
+		{
+		    HAL_GPIO_WritePin(ENA_Port, ENA_Pin, GPIO_PIN_SET); // Enable driver
+
+		}
+		void Motor_Direction_CW(void)
+		{
+		    HAL_GPIO_WritePin(DIR_Port, DIR_Pin, GPIO_PIN_RESET); // Enable driver
+		    delay_us(5);
+
+		}
+		void Motor_Direction_CWCCW(void)
+		{
+		    static uint8_t last_direction = 0; // 0 = CW, 1 = CCW
+
+		    if (last_direction == 0)
+		    {
+		        HAL_GPIO_WritePin(DIR_Port, DIR_Pin, GPIO_PIN_RESET); // CW
+		        last_direction = 1;
+		    }
+		    else
+		    {
+		        HAL_GPIO_WritePin(DIR_Port, DIR_Pin, GPIO_PIN_SET);   // CCW
+		        last_direction = 0;
+		    }
+
+		    delay_us(5); // optional: give the driver time to register the change
+		}
+
+		void Motor_Direction_CCW(void)
+		{
+		    HAL_GPIO_WritePin(DIR_Port, DIR_Pin, GPIO_PIN_SET); // Enable driver
+		    delay_us(5);
+
+
+		}
+		void Motor_OneStep(uint32_t step_speed_us)
+		{
+		    if (motor_running) return;               // Don’t re‑enter if already stepping
+
+		    // We only need 1 full step (HIGH+LOW = 2 interrupts)
+		    steps_needed     = 1;                    // count one rising edge
+		    step_interval_us = step_speed_us;        // same microsecond delay for each half pulse
+		    step_count       = 0;                    // reset the rising‑edge counter
+		    motor_running    = 1;                    // flag “we’re stepping now”
+
+		    // Program the timer for your desired half‑pulse interval
+		    __HAL_TIM_SET_AUTORELOAD(&htim2, step_interval_us - 1);
+		    __HAL_TIM_SET_COUNTER   (&htim2, 0);
+
+		    // Kick off the first half‑pulse right away
+		    HAL_GPIO_WritePin(PUL_Port, PUL_Pin, GPIO_PIN_SET);
+		    state = 1;    // next interrupt will take the pin LOW
+
+		    // Start the timer interrupts
+		    HAL_TIM_Base_Start_IT(&htim2);
+		}
+
+
+		void Motor_ContinousStep(uint32_t speed_us, uint32_t duration_ms, uint8_t direction) // 0 = CW, 1 = CCW
+		{
+		    if (motor_running) return;
+
+		    // Set direction pin
+		    if (direction == 0)
+		        HAL_GPIO_WritePin(DIR_Port, DIR_Pin, GPIO_PIN_RESET); // CW
+		    else
+		        HAL_GPIO_WritePin(DIR_Port, DIR_Pin, GPIO_PIN_SET);   // CCW
+
+		    delay_us(5); // Allow time for direction to latch
+
+		    step_interval_us = speed_us;
+
+		    steps_needed =duration_ms;//(duration_ms * 1000UL) / (step_interval_us * 2);
+		    step_count = 0;
+		    motor_running = 1;
+
+		    __HAL_TIM_SET_AUTORELOAD(&htim2, step_interval_us - 1);
+		    __HAL_TIM_SET_COUNTER(&htim2, 0);
+		    HAL_TIM_Base_Start_IT(&htim2);
+
+		    // 🔥 Immediate first step HIGH:
+		    HAL_GPIO_WritePin(PUL_Port, PUL_Pin, GPIO_PIN_SET);
+		    state = 1;  // Force state=1 so it LOWs next time
+		}
+
+		void Motor_ContinousStepWDelay(uint32_t speed_us)
+		{
+		    HAL_GPIO_WritePin(PUL_Port, PUL_Pin, GPIO_PIN_SET);
+		    delay_us(speed_us);
+		    HAL_GPIO_WritePin(PUL_Port, PUL_Pin, GPIO_PIN_RESET);
+		    delay_us(speed_us);
+
+
+		}
+
+
+		float clamp(float value, float min, float max)
+		{
+		    if (value < min) return min;
+		    if (value > max) return max;
+		    return value;
+		}
+
+		void DWT_Init(void) {
+		    // Enable TRC (Trace control)
+		    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+		    // Reset the cycle counter
+		    DWT->CYCCNT = 0;
+		    // Enable the cycle counter
+		    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+		}
+
+		void delay_us(uint32_t us) {
+		    uint32_t clk_cycle_start = DWT->CYCCNT;
+		    // Convert microseconds to clock cycles
+		    us *= (SystemCoreClock / 1000000);
+		    while ((DWT->CYCCNT - clk_cycle_start) < us);
+		}
 
 	/* USER CODE END 4 */
 
